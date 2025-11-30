@@ -1,0 +1,171 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+interface IVerifier {
+    function verifyProof(
+        uint[2] memory a,
+        uint[2][2] memory b,
+        uint[2] memory c,
+        uint[2] memory input
+    ) external view returns (bool);
+}
+
+contract AgeVerificationSystem {
+    IVerifier public immutable verifier;
+    
+    struct UserVerification {
+        bool isVerified;
+        uint256 commitment; // Hash commitment from ZK proof
+        uint256 timestamp;
+        uint256 minAge;
+    }
+    
+    // Events
+    event UserVerified(address indexed user, uint256 commitment, uint256 minAge);
+    event FileUploadAuthorized(address indexed user, string fileHash);
+    event FileUploadRejected(address indexed user, string reason);
+    
+    // Mappings
+    mapping(address => UserVerification) public userVerifications;
+    mapping(address => mapping(string => bool)) public authorizedFiles;
+    
+    // Configuration
+    uint256 public constant MIN_AGE_REQUIRED = 18;
+    uint256 public constant VERIFICATION_VALIDITY_PERIOD = 365 days;
+    
+    modifier onlyVerifiedUser() {
+        require(isUserVerified(msg.sender), "User not verified or verification expired");
+        _;
+    }
+    
+    constructor(address _verifier) {
+        verifier = IVerifier(_verifier);
+    }
+    
+    /**
+     * @dev Submit ZK proof for age verification
+     * @param proof The ZK-SNARK proof components [a, b, c]
+     * @param publicInputs [minAge, publicHash]
+     * @param commitment The commitment hash from the proof
+     */
+    function verifyAge(
+        uint[8] memory proof, // [a[0], a[1], b[0][0], b[0][1], b[1][0], b[1][1], c[0], c[1]]
+        uint[2] memory publicInputs, // [minAge, publicHash]
+        uint256 commitment
+    ) external {
+        require(publicInputs[0] >= MIN_AGE_REQUIRED, "Minimum age requirement not met");
+        
+        // Reconstruct proof components
+        uint[2] memory a = [proof[0], proof[1]];
+        uint[2][2] memory b = [[proof[2], proof[3]], [proof[4], proof[5]]];
+        uint[2] memory c = [proof[6], proof[7]];
+        
+        // Verify the ZK proof
+        bool proofValid = verifier.verifyProof(a, b, c, publicInputs);
+        require(proofValid, "Invalid zero-knowledge proof");
+        
+        // Store verification
+        userVerifications[msg.sender] = UserVerification({
+            isVerified: true,
+            commitment: commitment,
+            timestamp: block.timestamp,
+            minAge: publicInputs[0]
+        });
+        
+        emit UserVerified(msg.sender, commitment, publicInputs[0]);
+    }
+    
+    /**
+     * @dev Check if user is verified and verification hasn't expired
+     */
+    function isUserVerified(address user) public view returns (bool) {
+        UserVerification memory userVerif = userVerifications[user];
+        return userVerif.isVerified && 
+               (block.timestamp - userVerif.timestamp) <= VERIFICATION_VALIDITY_PERIOD;
+    }
+    
+    /**
+     * @dev Authorize file upload after verification check
+     * @param fileHash Hash of the file being uploaded
+     */
+    function authorizeFileUpload(string memory fileHash) external onlyVerifiedUser {
+        require(bytes(fileHash).length > 0, "File hash cannot be empty");
+        
+        // Additional checks can be added here (file size, type, etc.)
+        
+        authorizedFiles[msg.sender][fileHash] = true;
+        emit FileUploadAuthorized(msg.sender, fileHash);
+    }
+    
+    /**
+     * @dev Check if file upload is authorized for user
+     */
+    function isFileUploadAuthorized(address user, string memory fileHash) 
+        external 
+        view 
+        returns (bool) 
+    {
+        return isUserVerified(user) && authorizedFiles[user][fileHash];
+    }
+    
+    /**
+     * @dev Get user verification details
+     */
+    function getUserVerification(address user) 
+        external 
+        view 
+        returns (bool isVerified, uint256 commitment, uint256 timestamp, uint256 minAge) 
+    {
+        UserVerification memory userVerif = userVerifications[user];
+        return (
+            isUserVerified(user), 
+            userVerif.commitment, 
+            userVerif.timestamp, 
+            userVerif.minAge
+        );
+    }
+    
+    /**
+     * @dev Emergency function to revoke verification (admin only)
+     */
+    function revokeVerification(address user) external {
+        // In production, add proper access control (e.g., Ownable)
+        require(msg.sender == owner(), "Only owner can revoke verification");
+        
+        delete userVerifications[user];
+    }
+    
+    /**
+     * @dev Placeholder for owner function - implement proper access control
+     */
+    function owner() internal view returns (address) {
+        // Implement proper ownership pattern
+        return address(0); // Placeholder
+    }
+}
+
+/**
+ * @dev Generated verifier contract (this would be auto-generated by circom)
+ * This is a simplified version - actual verifier would be much more complex
+ */
+contract Verifier is IVerifier {
+    function verifyProof(
+        uint[2] memory a,
+        uint[2][2] memory b,
+        uint[2] memory c,
+        uint[2] memory input
+    ) external pure override returns (bool) {
+        // This is a placeholder implementation
+        // The actual verifier would contain complex cryptographic operations
+        // generated by the circom compiler
+        
+        // For demonstration purposes, we'll do basic validation
+        require(a[0] != 0 && a[1] != 0, "Invalid proof component a");
+        require(b[0][0] != 0 && b[0][1] != 0, "Invalid proof component b[0]");
+        require(b[1][0] != 0 && b[1][1] != 0, "Invalid proof component b[1]");
+        require(c[0] != 0 && c[1] != 0, "Invalid proof component c");
+        
+        // In real implementation, this would verify the actual ZK proof
+        return true; // Placeholder - always returns true for demo
+    }
+}
